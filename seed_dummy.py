@@ -1,52 +1,47 @@
 import os
 import re
-import cv2
-import easyocr
 from faker import Faker
 from sqlalchemy.orm import Session
+from sqlalchemy import text as sql_text
 from api.database import engine, SessionLocal
 from api import models
 
-# Inisialisasi
 fake = Faker('id_ID')
-reader = easyocr.Reader(['en']) # Model bahasa inggris cukup untuk baca plat nomor (alfanumerik)
 
 DATA_DIR = os.path.join("DATA plat", "Dataset_Primer_Raw")
 
-# Mapping nama folder ke enum TipePlat
-# Tipe_1: Sipil, Tipe_2: TNI AD, Tipe_3: TNI AL, Tipe_4: TNI AU, Tipe_5: Polri, Tipe_6: Kemhan
-# Karena di init.sql kita set TipePlat ke '1', '2', dll.
-FOLDER_TO_TIPE = {
-    "TNI AD": "2",
-    "TNI AL": "3",
-    "TNI AU": "4",
-    "POLRI": "5",
-    "Kemhan": "6",
-    "PATI": "7",
-    "Sipil": "1"
-}
-
 def clean_plate(text):
-    # Biarkan huruf, angka, spasi, dan tanda hubung (karena plat militer sering pakai tanda hubung)
     cleaned = re.sub(r'[^A-Z0-9\- ]', '', text.upper())
     return cleaned.strip()
 
-def generate_dummy_personel(db: Session, tipe_plat: str):
-    # Buat personel dummy
-    # Gunakan gelar/pangkat palsu
-    pangkat_list = ["Kolonel", "Letkol", "Mayor", "Kapten", "Lettu", "Jenderal"]
-    jabatan_list = ["Dosen", "Dekan", "Staf Akademik", "Peneliti", "Kajur"]
-    fakultas_list = ["Fakultas Teknik Militer", "Fakultas Keamanan Nasional", "Fakultas Kedokteran Militer"]
+def generate_dummy_personel(db: Session):
+    pangkat_list = ["Jenderal", "Kolonel", "Letkol", "Mayor", "Kapten", "Lettu"]
     
+    jabatan_unhan = [
+        "Rektor", "Wakil Rektor", "Dekan", "Wakil Dekan", 
+        "Kaprodi", "Dosen Tetap", "Peneliti", "Staf Akademik"
+    ]
+    
+    fakultas_unhan = [
+        "Fakultas Strategi Pertahanan",
+        "Fakultas Manajemen Pertahanan",
+        "Fakultas Keamanan Nasional",
+        "Fakultas Sains dan Teknologi Pertahanan",
+        "Fakultas Kedokteran dan Ilmu Kesehatan",
+        "Fakultas Farmasi Militer",
+        "Fakultas MIPA Militer"
+    ]
+    
+    # NIP is BigInteger, so we use digits
     new_personel = models.Personel(
-        nama_lengkap=fake.name()[:50], # Max 50 chars
-        nip=fake.numerify('##################')[:20], # 18 digits NIP
+        namaLengkap=fake.name()[:50],
+        nip=int(fake.numerify('##################')[:18]),
         pangkat=fake.random_element(elements=pangkat_list),
-        jabatan=fake.random_element(elements=jabatan_list),
-        fakultas=fake.random_element(elements=fakultas_list)
+        jabatan=fake.random_element(elements=jabatan_unhan),
+        fakultas=fake.random_element(elements=fakultas_unhan)
     )
     db.add(new_personel)
-    db.flush() # flush agar kita dapat id_personel
+    db.flush()
     return new_personel
 
 def process_images():
@@ -54,94 +49,133 @@ def process_images():
     db = SessionLocal()
     seen_plates = set()
     try:
+        # Bersihkan tabel secara tuntas dan reset ID ke angka 1
+        print("Mereset tabel dan ID ke 1...")
+        db.execute(sql_text('TRUNCATE TABLE "LogAkses", "Kendaraan", "Personel", "Admin" RESTART IDENTITY CASCADE;'))
+        db.commit()
+        
+        # Buat Admin Dummy
+        admin_dummy = models.Admin(namaAdmin="Admin Dummy", shiftJaga="Pagi")
+        db.add(admin_dummy)
+        db.flush()
+        
+        if not os.path.exists(DATA_DIR):
+            print(f"Directory {DATA_DIR} tidak ditemukan, seeding dibatalkan.")
+            return
+
         for folder_name in os.listdir(DATA_DIR):
             folder_path = os.path.join(DATA_DIR, folder_name)
             if not os.path.isdir(folder_path):
                 continue
             
-            # Tentukan tipe plat
-            tipe = FOLDER_TO_TIPE.get(folder_name, "1") # Default 1 (Sipil)
-            
-            print(f"\\nMembaca folder: {folder_name} (Tipe Plat: {tipe})")
+            print(f"\\nMembaca folder: {folder_name}")
             
             for file_name in os.listdir(folder_path):
                 if file_name.lower().endswith(('.jpg', '.png', '.jpeg')):
-                    img_path = os.path.join(folder_path, file_name)
                     print(f"  -> Memproses: {file_name}")
                     
-                    # 1. Extract text via EasyOCR
-                    # Baca gambar dengan OpenCV dan kecilkan ukurannya jika terlalu besar (mencegah Out of Memory)
-                    img = cv2.imread(img_path)
-                    if img is None:
-                        print("     [!] Gagal membaca file gambar")
+                    # Ambil nama file tanpa ekstensi sebagai nomor plat
+                    raw_plate = os.path.splitext(file_name)[0]
+                    plate_text = clean_plate(raw_plate)
+                    
+                    if not plate_text or len(plate_text) < 3:
+                        print(f"     [SKIP] Nama file tidak valid untuk plat: {file_name}")
                         continue
                         
-                    max_dimension = 1024
-                    height, width = img.shape[:2]
-                    if width > max_dimension or height > max_dimension:
-                        scale = max_dimension / max(width, height)
-                        img = cv2.resize(img, (int(width * scale), int(height * scale)))
-
-                    result = reader.readtext(img)
-                    
-                    # Ambil teks terpanjang yang kemungkinan besar adalah plat nomor dan WAJIB mengandung angka
-                    plate_text = ""
-                    for bbox, text, prob in result:
-                        cleaned_text = clean_plate(text)
-                        
-                        # Filter cerdas: Plat nomor PASTI mengandung angka. 
-                        # Ini membuang teks seperti "ISUZU", "TOYOTA", dll.
-                        if any(char.isdigit() for char in cleaned_text):
-                            if len(cleaned_text) > len(plate_text) and len(cleaned_text) >= 3:
-                                plate_text = cleaned_text
-                    
-                    if not plate_text:
-                        print(f"     [!] Plat tidak terdeteksi")
-                        continue
-                        
-                    # Potong jika lebih dari 15 karakter (limit database)
                     plate_text = plate_text[:15]
-                    print(f"     [OK] Plat terbaca: {plate_text}")
+                    print(f"     [OK] Plat didapat dari nama file: {plate_text}")
                     
-                    # 2. Cek apakah plat sudah ada di db atau di sesi ini
                     if plate_text in seen_plates:
-                        print(f"     [SKIP] Plat sudah diproses di sesi ini")
                         continue
                         
-                    existing = db.query(models.Kendaraan).filter(models.Kendaraan.plat_nomor == plate_text).first()
+                    existing = db.query(models.Kendaraan).filter(models.Kendaraan.platNomor == plate_text).first()
                     if existing:
-                        print(f"     [SKIP] Plat sudah ada di database")
                         continue
                     
                     seen_plates.add(plate_text)
                     
-                    # 3. Buat Dummy Personel
-                    personel = generate_dummy_personel(db, tipe)
+                    personel = generate_dummy_personel(db)
                     
-                    # 4. Buat Kendaraan
+                    instansi_kendaraan = folder_name
+                    
                     new_kendaraan = models.Kendaraan(
-                        plat_nomor=plate_text,
-                        id_personel=personel.id_personel, # Ini ID-nya
-                        jenis_kendaraan="Mobil", # Asumsi Mobil
-                        tipe_plat=tipe
+                        platNomor=plate_text,
+                        nip=personel.nip,
+                        jenisKendaraan="Mobil",
+                        instansi=instansi_kendaraan
                     )
                     db.add(new_kendaraan)
                     
-                    # Optional: Langsung buat Log Masuk hari ini
                     log_masuk = models.LogAkses(
-                        plat_nomor=plate_text,
-                        status_gerak="Masuk"
+                        platNomor=plate_text,
+                        idAdmin=admin_dummy.idAdmin,
+                        jenisAkses="RFID",
+                        statusBuka="Masuk",
+                        instansi=instansi_kendaraan
                     )
                     db.add(log_masuk)
                     
-                    # Bersihkan memori RAM agar tidak kepenuhan
-                    del img
-                    del result
-                    import gc
-                    gc.collect()
+        # --- Proses Data Sekunder (Sipil) ---
+        SEKUNDER_DIR = os.path.join("DATA plat", "Dataset_Sekunder_Visitor", "train", "images")
+        if os.path.exists(SEKUNDER_DIR):
+            import random
+            print(f"\nMembaca data sekunder (Sipil) dari folder: train/images")
+            count_sipil = 0
+            for file_name in os.listdir(SEKUNDER_DIR):
+                if file_name.lower().endswith(('.jpg', '.png', '.jpeg')):
+                    match = re.search(r'([A-Z]{1,2})(-[0-9]{1,4}-[A-Z]{1,3})', file_name)
+                    if match:
+                        prefix = match.group(1)
+                        suffix = match.group(2)
+                        
+                        # Ubah plat 'E' menjadi 'B' atau 'F' secara acak
+                        if prefix == 'E':
+                            prefix = random.choice(['B', 'F'])
+                            
+                        raw_plate = prefix + suffix
+                        plate_text = clean_plate(raw_plate)
+                        
+                        if plate_text in seen_plates:
+                            continue
+                            
+                        existing = db.query(models.Kendaraan).filter(models.Kendaraan.platNomor == plate_text).first()
+                        if existing:
+                            continue
+                        
+                        seen_plates.add(plate_text)
+                        
+                        if count_sipil < 5: # Batasi log agar tidak terlalu panjang
+                            print(f"  -> Memproses (Sipil): {file_name}")
+                            print(f"     [OK] Plat didapat: {plate_text}")
+                        elif count_sipil == 5:
+                            print("  -> ... (menyembunyikan log lainnya agar rapi) ...")
+                            
+                        count_sipil += 1
+                        
+                        personel = generate_dummy_personel(db)
+                        instansi_kendaraan = "Sipil"
+                        
+                        new_kendaraan = models.Kendaraan(
+                            platNomor=plate_text,
+                            nip=personel.nip,
+                            jenisKendaraan="Mobil",
+                            instansi=instansi_kendaraan
+                        )
+                        db.add(new_kendaraan)
+                        
+                        log_masuk = models.LogAkses(
+                            platNomor=plate_text,
+                            idAdmin=admin_dummy.idAdmin,
+                            jenisAkses="RFID",
+                            statusBuka="Masuk",
+                            instansi=instansi_kendaraan
+                        )
+                        db.add(log_masuk)
+            print(f"Berhasil menambahkan {count_sipil} data Sipil.")
+        # ------------------------------------
                     
         db.commit()
-        print("\\nSelesai! Semua data telah di-insert ke database.")
+        print("\\nSelesai! Semua data telah di-insert ke database dengan ID dimulai dari 1.")
     except Exception as e:
         db.rollback()
         print(f"Terjadi error: {e}")
