@@ -3,13 +3,11 @@
 Dokumen ini merangkum cakupan kerja (scope) dari peran Data Engineer dalam pengembangan sistem Data Pipeline Unhan RI.
 
 ## 1. Merancang Skema Database
-Membangun struktur relasional yang efisien (Normalized) namun tetap cepat untuk query (OLTP). Tabel utama yang dikelola:
-- **User**: Autentikasi dan otorisasi akses dasbor.
+Membangun struktur relasional yang efisien (Normalized) namun tetap cepat untuk query (OLTP). Tabel utama yang dikelola berdasarkan desain ERD yang terbaru:
+- **Admin**: Autentikasi dan otorisasi akses dasbor.
 - **Personel**: Data master pemilik kendaraan (TNI AD, AL, AU, Polri, Sipil, dll).
-- **Kendaraan**: Entitas kendaraan beserta atribut tipe platnya.
-- **Jenis Plat**: Referensi tipe plat nomor (berdasarkan matra/institusi).
-- **Gerbang**: Referensi lokasi kamera/gerbang.
-- **Log Akses**: Tabel transaksi bervolume tinggi yang mencatat waktu dan status gerak (Masuk/Keluar).
+- **Kendaraan**: Entitas kendaraan yang terkait dengan NIP personel (Satu Personel bisa memiliki banyak kendaraan).
+- **Log Akses**: Tabel transaksi bervolume tinggi yang mencatat waktu akses, plat nomor yang terbaca, status buka (Masuk/Keluar), jenis akses (RFID/OCR), dan instansi kendaraan.
 
 ## 2. Mendesain Data Pipeline OCR
 Membangun jalur pipa data yang menghubungkan perangkat edge (Kamera/Mesin OCR) menuju server pusat:
