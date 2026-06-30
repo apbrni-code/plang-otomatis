@@ -4,43 +4,47 @@ Berikut adalah desain skema database relasional (ERD) berdasarkan struktur tabel
 
 ```mermaid
 erDiagram
-    USERS {
-        int id PK
-        varchar(30) username "UNIQUE"
-        varchar(30) password
-        enum role "Admin / User"
+    Admin {
+        int idAdmin PK
+        varchar(50) namaAdmin
+        varchar(20) shiftJaga
     }
 
-    PERSONEL {
-        int id_personel PK
-        varchar(50) nama_lengkap
-        varchar(20) nip "UNIQUE"
-        varchar(30) pangkat
+    Personel {
+        int idPersonel PK
+        bigint nip "UNIQUE"
+        varchar(50) namaLengkap
+        varchar(50) pangkat
         varchar(50) jabatan
         varchar(50) fakultas
     }
 
-    KENDARAAN {
-        varchar(15) plat_nomor PK
-        int id_personel FK
-        enum jenis_kendaraan "Mobil / Motor"
-        enum tipe_plat "1 s.d. 7"
+    Kendaraan {
+        varchar(15) platNomor PK
+        bigint nip FK
+        varchar(30) jenisKendaraan
+        int tipePlat "1=TNI AD, 2=TNI AL, 3=TNI AU, 4=POLRI, 5=KEMHAN, 6=SIPIL"
+        varchar(25) instansi
     }
 
-    LOG_AKSES {
-        int id_log PK
-        varchar(15) plat_nomor FK
-        timestamp waktu_akses "DEFAULT NOW()"
-        enum status_gerak "Masuk / Keluar"
+    LogAkses {
+        int idLog PK
+        varchar(15) platNomor FK
+        int idAdmin FK
+        timestamp waktuAkses "DEFAULT NOW()"
+        varchar(20) jenisAkses
+        varchar(20) statusBuka
+        varchar(25) instansi
     }
 
     %% Relationships
-    PERSONEL ||--o{ KENDARAAN : "memiliki"
-    KENDARAAN ||--o{ LOG_AKSES : "tercatat di"
+    Personel ||--o{ Kendaraan : "memiliki"
+    Kendaraan ||--o{ LogAkses : "tercatat di"
+    Admin ||--o{ LogAkses : "mencatat"
 ```
 
 ### Keterangan Tabel:
-1. **USERS**: Tabel *standalone* untuk menyimpan kredensial login akun admin atau pengguna dasbor.
-2. **PERSONEL**: Menyimpan data master para pegawai/dosen/militer di lingkungan Unhan. Satu personel dapat memiliki lebih dari satu kendaraan (1 to Many).
-3. **KENDARAAN**: Data kendaraan yang didaftarkan. Menggunakan `plat_nomor` sebagai Primary Key.
-4. **LOG_AKSES**: Tabel *transactional* yang akan memiliki volume data paling besar. Setiap kali kamera mendeteksi plat, satu *row* akan ditambahkan di sini. Tabel ini berelasi dengan tabel KENDARAAN (1 to Many).
+1. **Admin**: Tabel untuk menyimpan data admin/petugas jaga.
+2. **Personel**: Menyimpan data master para pegawai/dosen/militer di lingkungan Unhan. Berelasi ke tabel kendaraan menggunakan `nip`.
+3. **Kendaraan**: Data kendaraan yang didaftarkan. Menggunakan `platNomor` sebagai Primary Key. Menyimpan kode `tipePlat` hasil dari klasifikasi OCR.
+4. **LogAkses**: Tabel *transactional* yang akan memiliki volume data paling besar. Setiap kali kamera mendeteksi plat, satu *row* akan ditambahkan di sini. Menyimpan informasi akses, status pintu gerbang, dan instansi.

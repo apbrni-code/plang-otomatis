@@ -25,6 +25,7 @@ class Kendaraan(Base):
     platNomor = Column("platNomor", String(15), primary_key=True, index=True)
     nip = Column("nip", BigInteger, ForeignKey("Personel.nip", ondelete="CASCADE"), nullable=True)
     jenisKendaraan = Column("jenisKendaraan", String(30), nullable=True)
+    tipePlat = Column("tipePlat", Integer, nullable=True)  # 1=TNI AD, 2=TNI AL, 3=TNI AU, 4=POLRI, 5=KEMHAN, 6=SIPIL
     instansi = Column("instansi", String(25), nullable=True)
     
     personel = relationship("Personel", back_populates="kendaraan")

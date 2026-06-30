@@ -4,6 +4,7 @@ import time
 
 from . import models, schemas
 from .database import engine, get_db
+from .schemas import TIPE_PLAT_MAP
 
 app = FastAPI(
     title="Data Pipeline Unhan RI",
@@ -12,6 +13,9 @@ app = FastAPI(
 )
 
 def process_ocr_data(payload: schemas.OCRPayload, db: Session):
+    # Resolve label instansi dari kode tipePlat model
+    label_instansi = TIPE_PLAT_MAP.get(payload.tipePlat, "Tamu") if payload.tipePlat else (payload.instansi or "Tamu")
+    
     # 1. Cek apakah kendaraan sudah terdaftar
     kendaraan = db.query(models.Kendaraan).filter(models.Kendaraan.platNomor == payload.platNomor).first()
     
@@ -19,8 +23,9 @@ def process_ocr_data(payload: schemas.OCRPayload, db: Session):
     if not kendaraan:
         new_kendaraan = models.Kendaraan(
             platNomor=payload.platNomor,
-            jenisKendaraan="Mobil", # Default tebakan
-            instansi=payload.instansi or "Tamu"
+            jenisKendaraan="Mobil",       # Default tebakan
+            tipePlat=payload.tipePlat,    # Kode dari model (bisa None jika tidak terdeteksi)
+            instansi=label_instansi       # Label otomatis dari TIPE_PLAT_MAP
         )
         db.add(new_kendaraan)
         try:
@@ -36,7 +41,7 @@ def process_ocr_data(payload: schemas.OCRPayload, db: Session):
         platNomor=payload.platNomor,
         jenisAkses=payload.jenisAkses,
         statusBuka=payload.statusBuka,
-        instansi=payload.instansi
+        instansi=label_instansi           # Label yang sama untuk konsistensi log
     )
     db.add(log_baru)
     try:
